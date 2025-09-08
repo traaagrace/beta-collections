@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Write to Obsidian</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f9;
+        }
+        h1 {
+            color: #333;
+        }
+        form {
+            margin: 20px 0;
+        }
+        label {
+            font-weight: bold;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            font-size: 16px;
+            border-radius: 4px;
+        }
+        textarea {
+            height: 200px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .response {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            background-color: #e7f4e7;
+            color: #4CAF50;
+        }
+        .error {
+            background-color: #f9d6d6;
+            color: #e74c3c;
+        }
+    </style>
+</head>
+<body>
+<h1>Write to Obsidian</h1>
+<form id="noteForm">
+    <label for="title">Note Title:</label>
+    <input type="text" id="title" name="title" required placeholder="Enter note title here...">
+    <br>
+    <label for="content">Enter your note content:</label>
+    <textarea id="content" name="content" required placeholder="Write your note content here..."></textarea>
+    <br>
+    <button type="submit">Save to Obsidian</button>
+</form>
+
+<div id="response" class="response"></div>
+
+<script>
+    document.getElementById("noteForm").addEventListener("submit", function(event) {
+        event.preventDefault(); // Prevent form from submitting the traditional way
+
+        const title = document.getElementById("title").value;
+        const content = document.getElementById("content").value;
+
+        // Show feedback to user that request is being processed
+        document.getElementById("response").innerText = "Saving your note... Please wait.";
+
+        // Make API request to save note
+        fetch('http://localhost:8080/obsidian/add-note', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ title: title, content: content })
+        })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById("response").innerText = data.message || "Note saved successfully!";
+                document.getElementById("response").classList.remove('error');
+            })
+            .catch(error => {
+                document.getElementById("response").innerText = 'An error occurred while saving the note.';
+                document.getElementById("response").classList.add('error');
+            });
+    });
+</script>
+</body>
+</html>

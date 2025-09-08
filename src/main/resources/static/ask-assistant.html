@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>问答助手</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 600px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+
+        label {
+            font-size: 18px;
+            color: #555;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+
+        button {
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        .loading {
+            display: none;
+            font-size: 16px;
+            color: #007BFF;
+        }
+
+        .response {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            min-height: 50px;
+        }
+
+        .error {
+            color: red;
+            font-size: 14px;
+        }
+
+        .disabled {
+            cursor: not-allowed;
+            background-color: #ccc;
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>问答助手</h1>
+    <form id="askForm">
+        <label for="userInput">请输入您的问题：</label>
+        <input type="text" id="userInput" name="userInput" required>
+        <button type="submit">提交问题</button>
+    </form>
+
+    <div class="loading" id="loading">正在获取回答，请稍候...</div>
+
+    <h2>回答：</h2>
+    <div class="response" id="response"></div>
+</div>
+
+<script>
+    document.getElementById("askForm").addEventListener("submit", function(event) {
+        event.preventDefault();
+
+        const userInput = document.getElementById("userInput").value;
+        const responseDiv = document.getElementById("response");
+        const loadingDiv = document.getElementById("loading");
+        const button = event.target.querySelector('button');
+
+        if (!userInput) {
+            responseDiv.innerHTML = '<p class="error">问题不能为空！</p>';
+            return;
+        }
+
+        // 给出按钮点击反馈
+        button.classList.add("disabled");
+        button.innerText = "正在处理...";
+
+        // 显示等待标识
+        loadingDiv.style.display = "block";
+        responseDiv.innerHTML = ""; // 清空以前的回答
+
+        fetch('/chat/ask', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ userInput: userInput })
+        })
+            .then(response => response.text())
+            .then(data => {
+                // 隐藏等待标识，显示返回结果
+                loadingDiv.style.display = "none";
+                button.classList.remove("disabled");
+                button.innerText = "提交问题";
+
+                // 展示返回的回答
+                responseDiv.innerText = data;
+            })
+            .catch(error => {
+                // 隐藏等待标识，显示错误信息
+                loadingDiv.style.display = "none";
+                button.classList.remove("disabled");
+                button.innerText = "提交问题";
+                responseDiv.innerHTML = '<p class="error">发生错误，请稍后重试。</p>';
+            });
+    });
+</script>
+
+</body>
+</html>
