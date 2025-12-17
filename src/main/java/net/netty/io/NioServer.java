@@ -11,18 +11,17 @@ public class NioServer {
         serverChannel.bind(new InetSocketAddress(8080));
         serverChannel.configureBlocking(false); // 非阻塞
 
-        Selector selector = Selector.open();
-        serverChannel.register(selector, SelectionKey.OP_ACCEPT);
+        Selector selector = Selector.open(); // epoll fd
+        serverChannel.register(selector, SelectionKey.OP_ACCEPT); // 注册可接收事件
 
         System.out.println("NIO Server started on 8080...");
-
         while (true) {
             selector.select(); // 阻塞直到有事件
             for (SelectionKey key : selector.selectedKeys()) {
                 if (key.isAcceptable()) {
                     SocketChannel client = serverChannel.accept();
                     client.configureBlocking(false);
-                    client.register(selector, SelectionKey.OP_READ);
+                    client.register(selector, SelectionKey.OP_READ); // 注册可读事件
                     System.out.println("New client: " + client.getRemoteAddress());
                 } else if (key.isReadable()) {
                     SocketChannel client = (SocketChannel) key.channel();

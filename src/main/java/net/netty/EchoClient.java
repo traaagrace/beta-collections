@@ -8,6 +8,9 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+
 public class EchoClient {
     private final String host;
     private final int port;
