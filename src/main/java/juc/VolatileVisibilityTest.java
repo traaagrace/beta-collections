@@ -11,7 +11,7 @@ public class VolatileVisibilityTest {
     public static void main(String[] args) throws InterruptedException {
         Thread reader = new Thread(() -> {
             System.out.println("Reader thread started...");
-            while (flag.equals(false)) {
+            while (flag.equals("false")) {
 
             }
             System.out.println("Reader thread detected flag = true");
