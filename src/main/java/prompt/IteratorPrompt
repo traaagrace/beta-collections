@@ -1,0 +1,294 @@
+角色定义，限制大模型的范围，比如小红书评论控制专家，擅长解决什么问题？
+具体任务定义，要识别评论类型，有哪些类型，每种类型怎么定义，最好通过关键词定义，方便调整。
+然后是示例，擅长模仿，更容易保证稳定发挥。
+最后是格式化输出，给出上下文信息。最后给出输出格式话，方便与系统连接。
+格式化层面需要反序列化保证。 整体项目层面要能保证持续迭代能力，问题发现能力，余额监控能力，架空能力。
+微调的时候建立了测试集根据异常case分析歧义点，或者prompt中未覆盖的点。然后调整关键词。
+prompt中包含关键词能更快定位是哪个词命中了，或者说那句话导致的，这样方便后续迭代。
+人工评估，更强的能力模型评估。
+
+---
+
+## 一、Prompt 结构设计
+
+### 标准模板
+
+```
+## 角色定义
+你是一位小红书评论运营专家，专注于识别和处理用户评论，
+擅长：评论情绪判断、意图识别、风险预警、回复建议。
+不处理：平台规则咨询、产品技术问题、客服退款流程。
+
+## 任务定义
+识别输入评论的类型，并给出处理建议。
+
+## 评论类型定义
+每种类型通过关键词锚定，方便后续迭代调整：
+
+TYPE_PRAISE（好评）
+  关键词：好用、推荐、喜欢、回购、必买、yyds、绝绝子
+  定义：用户表达正面情绪，无诉求
+
+TYPE_COMPLAINT（投诉）
+  关键词：坏了、质量差、退款、骗人、假货、举报、维权
+  定义：用户表达负面情绪，有明确诉求
+
+TYPE_QUESTION（咨询）
+  关键词：怎么用、多少钱、有没有、适合、推荐吗、链接
+  定义：用户提问，期望得到信息
+
+TYPE_SPAM（垃圾）
+  关键词：加微信、私信我、看主页、引流、代理
+  定义：明显广告或引流内容
+
+TYPE_NEUTRAL（中性）
+  定义：不含明显情绪或诉求，默认兜底类型
+
+## 示例（Few-shot）
+输入："这个真的超好用！已经回购三次了，强烈推荐！"
+输出：{"type": "TYPE_PRAISE", "hit_keywords": ["好用", "回购", "推荐"], ...}
+
+输入："收到是坏的，要退款，差评！"
+输出：{"type": "TYPE_COMPLAINT", "hit_keywords": ["坏了", "退款"], ...}
+
+## 输出格式
+严格按照以下 JSON 输出，禁止输出任何额外文字：
+{
+  "type": "类型枚举值",
+  "hit_keywords": ["命中的关键词列表"],  // 用于迭代追踪
+  "confidence": 0.0~1.0,
+  "sentiment": "positive|negative|neutral",
+  "priority": "high|medium|low",         // 投诉=high，咨询=medium，其余=low
+  "suggestion": "给运营的处理建议"
+}
+```
+
+---
+
+### 为什么要输出 `hit_keywords`
+
+这是你说的**关键词命中追踪**，是迭代能力的核心：
+
+```
+发现异常 case → 看 hit_keywords → 定位是哪个词触发的
+              → 是关键词歧义？还是 prompt 未覆盖的场景？
+              → 精准修改，不影响其他类型
+```
+
+没有这个字段，出了问题只能靠猜。
+
+---
+
+## 二、工程架构层面
+
+### 整体分层
+
+```
+┌─────────────────────────────────┐
+│         业务接入层               │  API 网关、限流、鉴权
+├─────────────────────────────────┤
+│         Prompt 管理层            │  版本管理、A/B 分流、灰度
+├─────────────────────────────────┤
+│         模型调用层               │  重试、超时、降级
+├─────────────────────────────────┤
+│         输出解析层               │  反序列化、格式校验、兜底
+├─────────────────────────────────┤
+│         观测层                   │  日志、监控、告警
+└─────────────────────────────────┘
+```
+
+---
+
+### 输出反序列化保证
+
+AI 输出的 JSON 不可完全信任，必须有防御层：
+
+```python
+import json
+import re
+
+def parse_llm_output(raw: str) -> dict:
+    # 1. 先尝试直接解析
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. 提取 JSON 块（AI 可能多输出了文字）
+    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    # 3. 兜底：返回默认值，标记为解析失败
+    return {
+        "type": "TYPE_NEUTRAL",
+        "hit_keywords": [],
+        "confidence": 0.0,
+        "parse_error": True,
+        "raw_output": raw  # 保留原始输出，方便排查
+    }
+```
+
+`parse_error: true` 的 case 要单独收集，这些往往是 Prompt 格式约束不够强的信号。
+
+---
+
+### 余额监控
+
+```python
+# 每次调用后记录消耗
+def call_llm(prompt, input_text):
+    response = client.chat(...)
+
+    usage = {
+        "timestamp": now(),
+        "prompt_tokens": response.usage.prompt_tokens,
+        "completion_tokens": response.usage.completion_tokens,
+        "cost": calc_cost(response.usage),  # 按当前模型单价计算
+        "prompt_version": PROMPT_VERSION    # 记录用的哪个版本
+    }
+    log_usage(usage)
+
+    # 累计消耗超阈值告警
+    daily_cost = get_daily_cost()
+    if daily_cost > ALERT_THRESHOLD:
+        send_alert(f"今日消耗已达 ${daily_cost}")
+
+    return response
+```
+
+按 **prompt_version** 分组统计，可以对比不同版本的 token 消耗，优化成本。
+
+---
+
+### 架空能力（降级）
+
+```python
+def classify_comment(text: str) -> dict:
+    try:
+        result = call_llm(PROMPT, text)
+        return parse_llm_output(result)
+
+    except RateLimitError:
+        # 限流降级：用规则引擎兜底
+        return rule_based_classify(text)
+
+    except TimeoutError:
+        # 超时降级：返回默认值，异步重试
+        enqueue_retry(text)
+        return {"type": "TYPE_NEUTRAL", "degraded": True}
+
+    except Exception as e:
+        # 兜底：记录异常，人工处理队列
+        enqueue_manual_review(text)
+        return {"type": "UNKNOWN", "error": str(e)}
+```
+
+规则引擎（`rule_based_classify`）就是简单的关键词匹配，准确率低但绝对稳定，是最后一道防线。
+
+---
+
+## 三、持续迭代体系
+
+### 问题发现 → 分析 → 修复闭环
+
+```
+线上数据
+  ↓
+自动采样（低置信度 + 随机抽样）
+  ↓
+人工标注 / 强模型评估
+  ↓
+发现歧义点 or 未覆盖场景
+  ↓
+定位（hit_keywords 追踪）
+  ↓
+调整关键词 or 补充示例
+  ↓
+测试集回归验证
+  ↓
+灰度上线 → 全量
+```
+
+---
+
+### 测试集管理
+
+```
+test_cases/
+  ├── baseline/          # 基准集，每次发版必须全部通过
+  ├── regression/        # 历史修复的 case，防止回归
+  └── edge_cases/        # 边界和歧义 case，持续补充
+```
+
+每个 case 的结构：
+
+```json
+{
+  "id": "case_001",
+  "input": "这个也太好用了吧，博主买的哪里的？",
+  "expected_type": "TYPE_QUESTION",
+  "ambiguity_note": "含好评词但主意图是咨询，容易误判为 TYPE_PRAISE",
+  "added_date": "2024-03-01",
+  "triggered_by": "issue_042"   // 关联到哪个线上问题
+}
+```
+
+---
+
+### 评估体系
+
+```
+第一层：自动化评估
+  → 跑测试集，统计 Accuracy / F1 by type
+  → 重点看低频类型（TYPE_SPAM）的召回率
+
+第二层：人工评估
+  → 每周随机抽 200 条线上数据，运营人员标注
+  → 重点关注 confidence < 0.7 的模糊 case
+
+第三层：强模型评估
+  → 用 GPT-4 / Claude Opus 对低置信度输出做二次判断
+  → 成本高，只用于关键场景或批量离线评估
+```
+
+---
+
+### Prompt 版本管理规范
+
+```
+v1.0.0  初始版本
+v1.0.1  新增关键词「炸了」到 TYPE_PRAISE（网络用语补充）
+v1.1.0  新增 TYPE_SENSITIVE 类型（涉及竞品的评论）
+v2.0.0  输出格式重构，新增 priority 字段
+```
+
+**每次变更必须记录**：改了什么、为什么改、影响了哪些测试 case。
+
+---
+
+## 四、一张图总结
+
+```
+Prompt 结构
+├── 角色定义（限范围）
+├── 类型定义（关键词锚定，方便调整）
+├── Few-shot 示例（稳定发挥）
+└── 输出格式（JSON + hit_keywords 追踪）
+
+工程保障
+├── 反序列化防御（parse_error 收集）
+├── 降级架空（规则引擎兜底）
+└── 余额监控（按版本分组统计）
+
+迭代体系
+├── 问题发现（低置信度采样 + 人工抽检）
+├── 歧义定位（hit_keywords 精准追踪）
+├── 测试集（baseline + regression + edge）
+└── 评估分层（自动化 → 人工 → 强模型）
+```
+
+你这套思路本质上是把**软件工程的方法论移植到 Prompt 工程**里，可观测、可迭代、可降级，这才是企业级 AI 产品能稳定运行的根本。
